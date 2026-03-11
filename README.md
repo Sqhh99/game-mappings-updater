@@ -38,9 +38,19 @@ uv run game-mappings-updater translate-steam
 
 # 4. 通过 Wikidata API 翻译游戏名（需先运行 scrape）
 uv run game-mappings-updater translate-wikidata
+
+# 5. 并发执行三个翻译源
+uv run game-mappings-updater translate-all
+
+# 6. 指定并发 worker 数
+uv run game-mappings-updater translate-all --workers 3
+
+# 7. 将三个翻译源汇总为 SQLite 数据库
+uv run game-mappings-updater build-sqlite
 ```
 
 `translate`、`translate-steam` 和 `translate-wikidata` 都支持增量运行：已翻译的游戏会自动跳过，中断后重新运行会继续。
+`translate-all` 会并发运行这三个翻译源，并把每个来源的输出分别写入对应的 JSON 文件。
 
 ## 输出文件
 
@@ -53,3 +63,12 @@ uv run game-mappings-updater translate-wikidata
 | `fling_translations_igdb.json` | IGDB 翻译结果（英文名 + 中文简体/繁体 + 日文） |
 | `fling_translations_steam.json` | Steam 翻译结果（英文名 + 中文简体 + 日文 + Steam 调试字段） |
 | `fling_translations_wikidata.json` | Wikidata 翻译结果（英文名 + 中文简体 + 日文 + Wikidata 调试字段） |
+| `fling_translations.db` | 汇总后的 SQLite 数据库，供搜索系统直接使用 |
+
+## SQLite 结构
+
+`build-sqlite` 会基于当前 `output/` 里的 JSON 生成 `fling_translations.db`，包含三张核心表：
+
+- `games`: FLiNG 的英文游戏名、trainer 名称、trainer URL、来源
+- `source_records`: 每个来源（IGDB / Steam / Wikidata）的原始翻译记录和外部 ID
+- `game_aliases`: 可直接用于搜索的别名表，包含英文、中文简体、中文繁体、日文，以及规范化后的 `normalized_alias`

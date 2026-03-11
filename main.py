@@ -7,16 +7,20 @@ game-mappings-updater — 从 flingtrainer.com 爬取所有修改器名称，
   translate        通过 IGDB API 翻译游戏名为中文/日文
   translate-steam  通过 Steam 商店接口补充中文/日文标题
   translate-wikidata  通过 Wikidata API 补充中文/日文标题
+  translate-all    并发执行 IGDB / Steam / Wikidata 翻译
+  build-sqlite     将三个翻译源汇总为 SQLite 数据库
 """
 
 from __future__ import annotations
 
 import argparse
+from concurrent.futures import ThreadPoolExecutor, as_completed
 import html
 import json
 import re
 import sys
 from pathlib import Path
+from typing import Callable
 
 import requests
 from bs4 import BeautifulSoup
@@ -435,6 +439,57 @@ def cmd_translate_wikidata() -> None:
     print(f"\n✔ Translations → {translations_path}")
 
 
+def cmd_build_sqlite() -> None:
+    """Build a SQLite database from the generated JSON outputs."""
+    from sqlite_export import build_sqlite_database
+
+    try:
+        db_path = build_sqlite_database(OUTPUT_DIR)
+    except FileNotFoundError as e:
+        print(f"ERROR: {e}")
+        sys.exit(1)
+
+    print(f"✔ SQLite database → {db_path}")
+
+
+def cmd_translate_all(workers: int) -> None:
+    """Run all translation sources concurrently."""
+    tasks: list[tuple[str, Callable[[], None]]] = [
+        ("IGDB", cmd_translate),
+        ("Steam", cmd_translate_steam),
+        ("Wikidata", cmd_translate_wikidata),
+    ]
+    max_workers = max(1, min(workers, len(tasks)))
+
+    print(f"Starting parallel translation jobs with {max_workers} worker(s) ...\n")
+    for label, _ in tasks:
+        print(f"[start] {label}")
+    print()
+
+    failures = 0
+    with ThreadPoolExecutor(max_workers=max_workers) as executor:
+        futures = {executor.submit(func): label for label, func in tasks}
+
+        for future in as_completed(futures):
+            label = futures[future]
+            try:
+                future.result()
+                print(f"✔ {label} completed")
+            except SystemExit as e:
+                code = e.code if isinstance(e.code, int) else 1
+                failures += 1
+                print(f"✘ {label} failed: exited with status {code}")
+            except Exception as e:
+                failures += 1
+                print(f"✘ {label} failed: {e}")
+
+    if failures:
+        print(f"ERROR: {failures} translation job(s) failed.")
+        sys.exit(1)
+
+    print("✔ All translation jobs completed")
+
+
 def _save_translations(
     path: Path, cache: dict[str, dict], ordered_names: list[str]
 ) -> None:
@@ -462,6 +517,17 @@ def cli(argv: list[str] | None = None) -> None:
     sub.add_parser("translate", help="通过 IGDB API 翻译游戏名为中文/日文")
     sub.add_parser("translate-steam", help="通过 Steam 商店接口翻译游戏名为中文/日文")
     sub.add_parser("translate-wikidata", help="通过 Wikidata API 翻译游戏名为中文/日文")
+    translate_all_parser = sub.add_parser(
+        "translate-all",
+        help="并发执行 IGDB / Steam / Wikidata 翻译",
+    )
+    translate_all_parser.add_argument(
+        "--workers",
+        type=int,
+        default=3,
+        help="并发 worker 数，默认 3",
+    )
+    sub.add_parser("build-sqlite", help="将 JSON 翻译结果汇总为 SQLite 数据库")
 
     args = parser.parse_args(argv)
 
@@ -473,6 +539,10 @@ def cli(argv: list[str] | None = None) -> None:
         cmd_translate_steam()
     elif args.command == "translate-wikidata":
         cmd_translate_wikidata()
+    elif args.command == "translate-all":
+        cmd_translate_all(args.workers)
+    elif args.command == "build-sqlite":
+        cmd_build_sqlite()
     else:
         parser.print_help()
         sys.exit(1)
