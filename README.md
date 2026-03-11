@@ -67,8 +67,11 @@ uv run game-mappings-updater build-sqlite
 
 ## SQLite 结构
 
-`build-sqlite` 会基于当前 `output/` 里的 JSON 生成 `fling_translations.db`，包含三张核心表：
+`build-sqlite` 会基于当前 `output/` 里的 JSON 生成 `fling_translations.db`。数据库现在分成“原始数据层”和“最佳翻译层”：
 
 - `games`: FLiNG 的英文游戏名、trainer 名称、trainer URL、来源
-- `source_records`: 每个来源（IGDB / Steam / Wikidata）的原始翻译记录和外部 ID
-- `game_aliases`: 可直接用于搜索的别名表，包含英文、中文简体、中文繁体、日文，以及规范化后的 `normalized_alias`
+- `source_records`: 每个来源（IGDB / Steam / Wikidata）的原始翻译记录、清洗后的字段、质量分和外部 ID
+- `best_translations`: 视图。为每款游戏选出最佳中文和最佳日文，并记录对应来源
+- `game_aliases`: 搜索专用别名表，只保留英文名和 `best_translations` 里选出的最佳中/日文别名，以及规范化后的 `normalized_alias`
+
+当前版本不会把所有来源的原始 alias 直接暴露给搜索层，也不包含 FTS 索引；搜索系统应优先使用 `best_translations` 和 `game_aliases`。
