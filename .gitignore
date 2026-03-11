@@ -3,6 +3,9 @@
 __pycache__/
 *.pyc
 
+# Credentials
+.env
+
 # Output (runtime-generated)
 output/
 __pycache__
