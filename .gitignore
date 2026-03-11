@@ -1,0 +1,8 @@
+# Python / uv
+.venv/
+__pycache__/
+*.pyc
+
+# Output (runtime-generated)
+output/
+__pycache__
