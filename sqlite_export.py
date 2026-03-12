@@ -66,6 +66,7 @@ _PUNCT_TRANSLATION = str.maketrans({
 
 _LEADING_TRAILING_SEPARATORS = " -–—_:：|/\\,.;·・()（）[]{}"
 _LATIN_RE = re.compile(r"[A-Za-z]")
+_LATIN_TOKEN_RE = re.compile(r"[A-Za-z][A-Za-z0-9]*")
 _CJK_RE = re.compile(r"[\u3400-\u4dbf\u4e00-\u9fff\uf900-\ufaff]")
 _JAPANESE_RE = re.compile(r"[\u3040-\u30ff\u3400-\u4dbf\u4e00-\u9fff\uf900-\ufaff]")
 
@@ -302,7 +303,7 @@ def _create_best_translations_view(conn: sqlite3.Connection) -> None:
             SELECT
                 english,
                 source,
-                COALESCE(NULLIF(chinese_simplified_clean, ''), chinese_traditional_clean) AS value,
+                chinese_simplified_clean AS value,
                 CASE source
                     WHEN 'wikidata' THEN {BEST_ZH_PRIORITY['wikidata']}
                     WHEN 'steam' THEN {BEST_ZH_PRIORITY['steam']}
@@ -311,7 +312,7 @@ def _create_best_translations_view(conn: sqlite3.Connection) -> None:
                 END AS source_rank,
                 quality_score
             FROM source_records
-            WHERE chinese_simplified_clean != '' OR chinese_traditional_clean != ''
+            WHERE chinese_simplified_clean != ''
         ),
         ja_candidates AS (
             SELECT
@@ -478,24 +479,27 @@ def _clean_localized_value(text: str, english: str, language: str) -> tuple[str,
     cleaned = _trim_localized_text(cleaned)
 
     if language == "zh":
-        if _contains_cjk(cleaned) and not _contains_latin(cleaned):
+        if _contains_cjk(cleaned) and not _contains_disallowed_latin(cleaned):
             return cleaned, False
         if _contains_cjk(cleaned):
+            stripped = _remove_latin_chunks(cleaned)
+            if _contains_cjk(stripped) and not _contains_disallowed_latin(stripped):
+                return stripped, False
             return "", True
         if _contains_cjk(text):
             stripped = _remove_latin_chunks(text)
-            if _contains_cjk(stripped) and not _contains_latin(stripped):
+            if _contains_cjk(stripped) and not _contains_disallowed_latin(stripped):
                 return stripped, False
-        return "", _contains_latin(text)
+        return "", _contains_disallowed_latin(text)
 
     if language == "ja":
-        if _contains_japanese(cleaned) and not _contains_latin(cleaned):
+        if _contains_japanese(cleaned) and not _contains_disallowed_latin(cleaned):
             return cleaned, False
         if _contains_japanese(cleaned):
             stripped = _remove_latin_chunks(cleaned)
-            if _contains_japanese(stripped) and not _contains_latin(stripped):
+            if _contains_japanese(stripped) and not _contains_disallowed_latin(stripped):
                 return stripped, False
-        return "", _contains_latin(text)
+        return "", _contains_disallowed_latin(text)
 
     return cleaned, False
 
@@ -609,6 +613,20 @@ def _normalize_text(value: str) -> str:
 
 def _contains_latin(value: str) -> bool:
     return bool(_LATIN_RE.search(value))
+
+
+def _contains_disallowed_latin(value: str) -> bool:
+    tokens = _LATIN_TOKEN_RE.findall(value)
+    if not tokens:
+        return False
+    return any(not _is_allowed_latin_token(token) for token in tokens)
+
+
+def _is_allowed_latin_token(token: str) -> bool:
+    upper = token.upper()
+    if len(upper) == 1:
+        return True
+    return all(ch in "IVXLCDM" for ch in upper)
 
 
 def _contains_cjk(value: str) -> bool:

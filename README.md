@@ -71,7 +71,7 @@ uv run game-mappings-updater build-sqlite
 
 - `games`: FLiNG 的英文游戏名、trainer 名称、trainer URL、来源
 - `source_records`: 每个来源（IGDB / Steam / Wikidata）的原始翻译记录、清洗后的字段、质量分和外部 ID
-- `best_translations`: 视图。为每款游戏选出最佳中文和最佳日文，并记录对应来源
-- `game_aliases`: 搜索专用别名表，只保留英文名和 `best_translations` 里选出的最佳中/日文别名，以及规范化后的 `normalized_alias`
+- `best_translations`: 视图。为每款游戏选出最佳简体中文和最佳日文，并记录对应来源
+- `game_aliases`: 搜索专用别名表，只保留英文名和 `best_translations` 里选出的最佳简体中文/日文别名，以及规范化后的 `normalized_alias`
 
-当前版本不会把所有来源的原始 alias 直接暴露给搜索层，也不包含 FTS 索引；搜索系统应优先使用 `best_translations` 和 `game_aliases`。
+当前版本不会把所有来源的原始 alias 直接暴露给搜索层，也不包含 FTS 索引；搜索系统应优先使用 `best_translations` 和 `game_aliases`。繁体中文仍保留在 `source_records`，但不会进入 `best_zh` 或默认中文搜索别名。
