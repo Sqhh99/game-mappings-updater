@@ -170,5 +170,6 @@ git push origin main --tags
 
 - Release 使用你推送的 tag 作为版本号和标题
 - 数据库里的 `metadata.release_tag` 会以 `build-sqlite --release-tag` 写入的值为准
+- workflow 会校验“当前推送的 tag == 数据库里的 `metadata.release_tag`”，不一致则发布失败
 - workflow 不会在 CI 里重新生成数据库
 - 如果 tag 对应提交里没有 `output/fling_translations.db`，发布会直接失败

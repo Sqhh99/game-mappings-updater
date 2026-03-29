@@ -23,6 +23,35 @@ jobs:
             exit 1
           }
 
+      - name: Validate database release tag
+        env:
+          EXPECTED_TAG: ${{ github.ref_name }}
+        run: |
+          python3 - <<'PY'
+          import sqlite3
+          import sys
+
+          expected_tag = "${{ github.ref_name }}"
+          conn = sqlite3.connect("output/fling_translations.db")
+          try:
+            row = conn.execute(
+              "SELECT value FROM metadata WHERE key = 'release_tag'"
+            ).fetchone()
+          finally:
+            conn.close()
+
+          actual_tag = (row[0].strip() if row and isinstance(row[0], str) else "")
+          if not actual_tag:
+            print("Database metadata.release_tag is empty")
+            sys.exit(1)
+          if actual_tag != expected_tag:
+            print(
+              f"Database metadata.release_tag mismatch: expected {expected_tag}, got {actual_tag}"
+            )
+            sys.exit(1)
+          print(f"Validated database release_tag: {actual_tag}")
+          PY
+
       - name: Create or update GitHub release
         uses: softprops/action-gh-release@v2
         with:
@@ -34,4 +63,3 @@ jobs:
           prerelease: false
           files: |
             output/fling_translations.db
-
