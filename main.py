@@ -453,17 +453,18 @@ def cmd_translate_wikidata() -> None:
     print(f"\n✔ Translations → {translations_path}")
 
 
-def cmd_build_sqlite() -> None:
+def cmd_build_sqlite(release_tag: str = "") -> None:
     """Build a SQLite database from manual mappings and FLiNG scrape outputs."""
     from sqlite_export import build_sqlite_database
 
     try:
-        db_path = build_sqlite_database(OUTPUT_DIR)
+        db_path = build_sqlite_database(OUTPUT_DIR, release_tag=release_tag)
     except (FileNotFoundError, ValueError) as e:
         print(f"ERROR: {e}")
         sys.exit(1)
 
     print(f"✔ SQLite database → {db_path}")
+    print(f"✔ Release tag      → {release_tag or '(empty)'}")
 
 
 def cmd_update() -> None:
@@ -769,6 +770,8 @@ def cmd_sqlite_status(limit: int) -> None:
         row = conn.execute(
             """
             SELECT
+                schema_version,
+                release_tag,
                 build_generated_at,
                 total_games,
                 ok_games,
@@ -803,6 +806,8 @@ def cmd_sqlite_status(limit: int) -> None:
 
     assert row is not None
     (
+        schema_version,
+        release_tag,
         build_generated_at,
         total_games,
         ok_games,
@@ -815,6 +820,8 @@ def cmd_sqlite_status(limit: int) -> None:
 
     print(f"{'=' * 60}")
     print(f"DB Path              : {db_path}")
+    print(f"Schema Version       : {schema_version}")
+    print(f"Release Tag          : {release_tag or '(empty)'}")
     print(f"Build Generated At   : {build_generated_at}")
     print(f"Total Games          : {total_games}")
     print(f"OK Games             : {ok_games}")
@@ -920,7 +927,15 @@ def cli(argv: list[str] | None = None) -> None:
         default=3,
         help="并发 worker 数，默认 3",
     )
-    sub.add_parser("build-sqlite", help="将 manual 映射和 FLiNG 抓取结果汇总为 SQLite 数据库")
+    build_sqlite_parser = sub.add_parser(
+        "build-sqlite",
+        help="将 manual 映射和 FLiNG 抓取结果汇总为 SQLite 数据库",
+    )
+    build_sqlite_parser.add_argument(
+        "--release-tag",
+        default="",
+        help="写入 metadata.release_tag，例如 v1.0.0",
+    )
     sqlite_status_parser = sub.add_parser(
         "sqlite-status",
         help="查看 SQLite 数据库状态和待处理映射",
@@ -972,7 +987,7 @@ def cli(argv: list[str] | None = None) -> None:
     elif args.command == "translate-all":
         cmd_translate_all(args.workers)
     elif args.command == "build-sqlite":
-        cmd_build_sqlite()
+        cmd_build_sqlite(args.release_tag)
     elif args.command == "sqlite-status":
         cmd_sqlite_status(args.limit)
     elif args.command == "export-missing":

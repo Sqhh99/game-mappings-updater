@@ -12,6 +12,8 @@ import unicodedata
 from datetime import datetime, timezone
 from pathlib import Path
 
+SCHEMA_VERSION = "1"
+
 _PUNCT_TRANSLATION = str.maketrans({
     ":": " ",
     "：": " ",
@@ -56,7 +58,7 @@ _TRAINER_SUFFIXES = (
 )
 
 
-def build_sqlite_database(output_dir: Path) -> Path:
+def build_sqlite_database(output_dir: Path, *, release_tag: str = "") -> Path:
     """Build the SQLite database from JSON outputs in ``output_dir``."""
     output_dir.mkdir(parents=True, exist_ok=True)
 
@@ -89,6 +91,7 @@ def build_sqlite_database(output_dir: Path) -> Path:
         _insert_metadata(
             conn,
             generated_at=generated_at,
+            release_tag=_clean_text(release_tag),
             manual_rows=manual_rows,
             manual_index=manual_index,
             manual_stats=manual_stats,
@@ -397,6 +400,7 @@ def _insert_metadata(
     conn: sqlite3.Connection,
     *,
     generated_at: str,
+    release_tag: str,
     manual_rows: list[dict],
     manual_index: dict[str, dict],
     manual_stats: dict[str, int],
@@ -405,6 +409,8 @@ def _insert_metadata(
     games: list[dict],
 ) -> None:
     rows = [
+        ("schema_version", SCHEMA_VERSION),
+        ("release_tag", release_tag),
         ("build_generated_at", generated_at),
         ("manual_rows", str(len(manual_rows))),
         ("manual_unique_games", str(len(manual_index))),
@@ -448,6 +454,8 @@ def _create_views(conn: sqlite3.Connection) -> None:
         """
         CREATE VIEW db_status AS
         SELECT
+            (SELECT value FROM metadata WHERE key = 'schema_version') AS schema_version,
+            (SELECT value FROM metadata WHERE key = 'release_tag') AS release_tag,
             (SELECT value FROM metadata WHERE key = 'build_generated_at') AS build_generated_at,
             COUNT(*) AS total_games,
             SUM(CASE WHEN status = 'ok' THEN 1 ELSE 0 END) AS ok_games,

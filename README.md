@@ -154,8 +154,8 @@ uv run game-mappings-updater import-missing
 发布流程：
 
 ```bash
-# 1. 先确保数据库已经更新并提交
-uv run game-mappings-updater build-sqlite
+# 1. 先写入 release tag 并生成数据库
+uv run game-mappings-updater build-sqlite --release-tag v1.0.0
 
 # 2. 提交代码和 output/fling_translations.db
 git add -A
@@ -169,5 +169,6 @@ git push origin main --tags
 注意：
 
 - Release 使用你推送的 tag 作为版本号和标题
+- 数据库里的 `metadata.release_tag` 会以 `build-sqlite --release-tag` 写入的值为准
 - workflow 不会在 CI 里重新生成数据库
 - 如果 tag 对应提交里没有 `output/fling_translations.db`，发布会直接失败
