@@ -1,0 +1,37 @@
+name: make-release
+
+on:
+  push:
+    tags:
+      - "*"
+
+permissions:
+  contents: write
+
+jobs:
+  make-release:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout tag
+        uses: actions/checkout@v4
+
+      - name: Ensure release asset exists
+        run: |
+          test -f output/fling_translations.db || {
+            echo "Missing release asset: output/fling_translations.db"
+            exit 1
+          }
+
+      - name: Create or update GitHub release
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ github.ref_name }}
+          name: ${{ github.ref_name }}
+          body: |
+            SQLite database release for `${{ github.ref_name }}`.
+          draft: false
+          prerelease: false
+          files: |
+            output/fling_translations.db
+

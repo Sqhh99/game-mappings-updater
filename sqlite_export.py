@@ -97,7 +97,6 @@ def build_sqlite_database(output_dir: Path) -> Path:
             games=games,
         )
         _insert_games(conn, games)
-        _insert_aliases(conn, games)
         _create_views(conn)
         conn.commit()
     finally:
@@ -366,7 +365,8 @@ def _initialize_schema(conn: sqlite3.Connection) -> None:
         );
 
         CREATE TABLE games (
-            english TEXT PRIMARY KEY,
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            english TEXT NOT NULL UNIQUE,
             normalized_english TEXT NOT NULL,
             chinese_simplified TEXT NOT NULL DEFAULT '',
             japanese TEXT NOT NULL DEFAULT '',
@@ -386,24 +386,9 @@ def _initialize_schema(conn: sqlite3.Connection) -> None:
             last_seen_at TEXT NOT NULL
         );
 
-        CREATE TABLE game_aliases (
-            id INTEGER PRIMARY KEY AUTOINCREMENT,
-            english TEXT NOT NULL,
-            alias TEXT NOT NULL,
-            normalized_alias TEXT NOT NULL,
-            language TEXT NOT NULL,
-            source TEXT NOT NULL,
-            is_primary INTEGER NOT NULL DEFAULT 0,
-            FOREIGN KEY (english) REFERENCES games(english) ON DELETE CASCADE,
-            UNIQUE (english, alias, language)
-        );
-
         CREATE INDEX idx_games_status ON games(status);
         CREATE INDEX idx_games_missing_mapping ON games(missing_mapping);
-        CREATE INDEX idx_game_aliases_lookup
-            ON game_aliases(normalized_alias, language);
-        CREATE INDEX idx_game_aliases_english
-            ON game_aliases(english, language);
+        CREATE INDEX idx_games_english ON games(english);
         """
     )
 
@@ -456,78 +441,6 @@ def _insert_games(conn: sqlite3.Connection, games: list[dict]) -> None:
         """,
         games,
     )
-
-
-def _insert_aliases(conn: sqlite3.Connection, games: list[dict]) -> None:
-    aliases: list[dict] = []
-    seen: set[tuple[str, str, str]] = set()
-
-    for game in games:
-        english = game["english"]
-        _append_alias(
-            aliases,
-            seen,
-            english=english,
-            alias=english,
-            language="en",
-            source="canonical",
-        )
-        _append_alias(
-            aliases,
-            seen,
-            english=english,
-            alias=game["chinese_simplified"],
-            language="zh",
-            source="manual",
-        )
-        _append_alias(
-            aliases,
-            seen,
-            english=english,
-            alias=game["japanese"],
-            language="ja",
-            source="manual",
-        )
-
-    conn.executemany(
-        """
-        INSERT INTO game_aliases(
-            english, alias, normalized_alias, language, source, is_primary
-        )
-        VALUES(
-            :english, :alias, :normalized_alias, :language, :source, :is_primary
-        )
-        """,
-        aliases,
-    )
-
-
-def _append_alias(
-    aliases: list[dict],
-    seen: set[tuple[str, str, str]],
-    *,
-    english: str,
-    alias: object,
-    language: str,
-    source: str,
-) -> None:
-    clean_alias = _clean_text(alias)
-    if not clean_alias:
-        return
-
-    key = (english, clean_alias, language)
-    if key in seen:
-        return
-
-    seen.add(key)
-    aliases.append({
-        "english": english,
-        "alias": clean_alias,
-        "normalized_alias": _normalize_text(clean_alias),
-        "language": language,
-        "source": source,
-        "is_primary": 1,
-    })
 
 
 def _create_views(conn: sqlite3.Connection) -> None:

@@ -97,8 +97,7 @@ uv run game-mappings-updater import-missing
 
 数据库现在包含：
 
-- `games`: 主表。每个英文游戏名一行，包含简体中文、日文、trainer 信息、`status`、缺失标记、`first_seen_at`、`last_seen_at`
-- `game_aliases`: 搜索专用别名表，只保留英文名、手工简体中文、手工日文，以及规范化后的 `normalized_alias`
+- `games`: 主表。使用自增 `id` 作为主键，`english` 作为唯一业务键；每个英文游戏名一行，包含简体中文、日文、trainer 信息、`status`、缺失标记、`first_seen_at`、`last_seen_at`
 - `metadata`: 构建时间、输入文件数量、手工映射去重/冲突统计
 - `db_status`: 汇总视图，用于查询数据库当前状态，例如缺失映射数量、缺简中/日文数量、manual-only 数量
 - `needs_review`: 明细视图，列出 `status != 'ok'` 或手工映射冲突的游戏
@@ -145,3 +144,30 @@ uv run game-mappings-updater import-missing
 - `trainer_url`
 
 导入时只会读取 `en / zh / ja`，其余字段只用于人工排查。`import-missing` 默认只补缺失，不覆盖 `game_mappings_manual.json` 里已有的非空值。
+
+## Release 发布
+
+仓库内置了一个 GitHub Actions workflow：`make-release`。
+
+当你 push 任意 tag 时，workflow 会直接读取该 tag 对应提交里的 `output/fling_translations.db`，自动创建正式 GitHub Release，并把这个 DB 作为 release asset 上传。
+
+发布流程：
+
+```bash
+# 1. 先确保数据库已经更新并提交
+uv run game-mappings-updater build-sqlite
+
+# 2. 提交代码和 output/fling_translations.db
+git add -A
+git commit -m "Update database"
+
+# 3. 打 tag 并推送
+git tag v1.0.0
+git push origin main --tags
+```
+
+注意：
+
+- Release 使用你推送的 tag 作为版本号和标题
+- workflow 不会在 CI 里重新生成数据库
+- 如果 tag 对应提交里没有 `output/fling_translations.db`，发布会直接失败
