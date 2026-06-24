@@ -1,6 +1,6 @@
 [project]
 name = "game-mappings-updater"
-version = "0.1.0"
+version = "0.0.2"
 description = "从 flingtrainer.com 爬取所有修改器名称，用于维护 FLiNG Downloader 的游戏名映射表"
 readme = "README.md"
 requires-python = ">=3.12"
