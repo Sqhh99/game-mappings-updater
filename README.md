@@ -57,13 +57,22 @@ uv run game-mappings-updater sqlite-status
 # 10. 限制显示的待处理记录条数
 uv run game-mappings-updater sqlite-status --limit 50
 
-# 11. 单独导出缺失映射模板
+# 11. 下载现代修改器页面封面图（需先运行 scrape / update）
+uv run game-mappings-updater download-covers
+
+# 12. 调试时只下载前 3 个，输出到临时目录
+uv run game-mappings-updater download-covers --limit 3 --output-dir /tmp/fling-covers-test
+
+# 13. 覆盖已存在封面
+uv run game-mappings-updater download-covers --force
+
+# 14. 单独导出缺失映射模板
 uv run game-mappings-updater export-missing
 
-# 12. 只校验补齐后的 JSON 格式和内容
+# 15. 只校验补齐后的 JSON 格式和内容
 uv run game-mappings-updater import-missing --check-only
 
-# 13. 导入补齐后的缺失映射，并自动重建 DB / 重新导出缺失模板
+# 16. 导入补齐后的缺失映射，并自动重建 DB / 重新导出缺失模板
 uv run game-mappings-updater import-missing
 ```
 
@@ -84,6 +93,20 @@ uv run game-mappings-updater import-missing
 | `game_mappings_manual.json` | 手工维护的英文/简中/日文映射，作为 SQLite 导出的唯一翻译来源 |
 | `game_mappings_missing.json` | 当前缺失翻译映射的导出模板，补齐后可直接导入 |
 | `fling_translations.db` | 基于 manual 映射和 FLiNG 抓取结果生成的 SQLite 数据库，供搜索系统直接使用 |
+| `trainer_covers/` | `download-covers` 下载的现代修改器页面封面图，默认不提交到 git |
+
+## 修改器封面下载
+
+`download-covers` 会读取 `output/fling_all_trainers.json`，只处理其中 `source = "modern"` 且有独立 trainer 页面 URL 的条目。Archive 条目当前只有统一入口页，因此会跳过。
+
+下载逻辑会进入每个 trainer 页面，在文章正文里优先选取第一张 `img.aligncenter` 图片；如果图片带 `srcset`，会选择最大宽度版本。文件保存到 `output/trainer_covers/`，文件名使用 trainer 页面 slug，例如 `ace-combat-7-skies-unknown-trainer.jpg`。
+
+常用参数：
+
+- `--workers N`: 并发下载数，默认 8
+- `--limit N`: 只处理前 N 个 modern trainer 页面，便于调试
+- `--output-dir PATH`: 指定图片输出目录
+- `--force`: 覆盖已存在图片；默认跳过已存在文件
 
 ## SQLite 结构
 
@@ -154,8 +177,8 @@ uv run game-mappings-updater import-missing
 发布流程：
 
 ```bash
-# 1. 先写入 release tag 并生成数据库
-uv run game-mappings-updater build-sqlite --release-tag v1.0.0
+# 1. 生成数据库
+uv run game-mappings-updater build-sqlite
 
 # 2. 提交代码和 output/fling_translations.db
 git add -A
@@ -169,7 +192,8 @@ git push origin main --tags
 注意：
 
 - Release 使用你推送的 tag 作为版本号和标题
-- 数据库里的 `metadata.release_tag` 会以 `build-sqlite --release-tag` 写入的值为准
+- workflow 会在发布前把数据库里的 `metadata.release_tag` 写成当前 tag
+- `build-sqlite --release-tag` 仍可用于本地预览，但不是发布成功的硬性前置
 - workflow 会校验“当前推送的 tag == 数据库里的 `metadata.release_tag`”，不一致则发布失败
 - workflow 不会在 CI 里重新生成数据库
 - 如果 tag 对应提交里没有 `output/fling_translations.db`，发布会直接失败

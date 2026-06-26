@@ -11,6 +11,7 @@ game-mappings-updater — 从 flingtrainer.com 爬取所有修改器名称，
   translate-all    并发执行 IGDB / Steam / Wikidata 翻译
   build-sqlite     将 manual 映射和 FLiNG 抓取结果汇总为 SQLite 数据库
   sqlite-status    查看 SQLite 数据库状态和待处理映射
+  download-covers  下载现代修改器页面封面图
   export-missing   导出缺失翻译映射模板 JSON
   import-missing   校验并导入补齐后的缺失映射 JSON
 """
@@ -26,6 +27,7 @@ import sqlite3
 import sys
 from pathlib import Path
 from typing import Callable
+from urllib.parse import urljoin, urlparse
 
 import requests
 from bs4 import BeautifulSoup
@@ -57,6 +59,7 @@ OUTPUT_DIR = Path(__file__).resolve().parent / "output"
 SQLITE_DB_PATH = OUTPUT_DIR / "fling_translations.db"
 MANUAL_MAPPINGS_PATH = OUTPUT_DIR / "game_mappings_manual.json"
 MISSING_MAPPINGS_PATH = OUTPUT_DIR / "game_mappings_missing.json"
+TRAINER_COVERS_DIR = OUTPUT_DIR / "trainer_covers"
 MISSING_EXPORTABLE_STATUSES = (
     "missing_manual_mapping",
     "missing_chinese",
@@ -478,6 +481,244 @@ def cmd_update() -> None:
     print("\n[3/3] Exporting missing mappings …")
     export_path = cmd_export_missing(MISSING_MAPPINGS_PATH)
     print(f"✔ Update finished → {export_path}")
+
+
+def cmd_download_covers(
+    *,
+    workers: int,
+    limit: int | None,
+    output_dir: Path,
+    force: bool,
+) -> None:
+    """Download cover images from modern FLiNG trainer pages."""
+    trainers_path = OUTPUT_DIR / "fling_all_trainers.json"
+    trainers = _load_trainer_rows(trainers_path)
+    modern_trainers = [
+        trainer
+        for trainer in trainers
+        if _clean_mapping_text(trainer.get("source")) == "modern"
+        and _is_trainer_page_url(_clean_mapping_text(trainer.get("url")))
+    ]
+    archive_count = sum(
+        1 for trainer in trainers if _clean_mapping_text(trainer.get("source")) == "archive"
+    )
+
+    if limit is not None:
+        modern_trainers = modern_trainers[: max(0, limit)]
+
+    output_dir.mkdir(parents=True, exist_ok=True)
+    max_workers = max(1, workers)
+
+    print(f"Trainer source       : {trainers_path}")
+    print(f"Modern trainer pages : {len(modern_trainers)}")
+    print(f"Skipped archive rows : {archive_count}")
+    print(f"Output directory     : {output_dir}")
+    print(f"Workers              : {max_workers}")
+    print()
+
+    results: list[dict[str, str]] = []
+    with ThreadPoolExecutor(max_workers=max_workers) as executor:
+        futures = [
+            executor.submit(_download_trainer_cover, trainer, output_dir, force)
+            for trainer in modern_trainers
+        ]
+
+        for index, future in enumerate(as_completed(futures), 1):
+            result = future.result()
+            results.append(result)
+            status = result["status"]
+            if status == "downloaded":
+                print(f"[{index}/{len(futures)}] ✔ {result['name']} → {result['file']}")
+            elif status == "skipped_existing":
+                print(f"[{index}/{len(futures)}] ↷ {result['name']} (exists)")
+            else:
+                print(f"[{index}/{len(futures)}] ✘ {result['name']} ({result['error']})")
+
+    downloaded = sum(1 for result in results if result["status"] == "downloaded")
+    skipped_existing = sum(1 for result in results if result["status"] == "skipped_existing")
+    failed = sum(1 for result in results if result["status"] == "failed")
+
+    print()
+    print(f"{'=' * 50}")
+    print(f"Downloaded       : {downloaded}")
+    print(f"Skipped existing : {skipped_existing}")
+    print(f"Failed           : {failed}")
+    print(f"Skipped archive  : {archive_count}")
+    print(f"{'=' * 50}")
+    print(f"✔ Covers directory → {output_dir}")
+
+    if failed:
+        print()
+        print("Failed items:")
+        for result in results:
+            if result["status"] == "failed":
+                print(f"  - {result['name']}: {result['error']}")
+
+
+def _load_trainer_rows(path: Path) -> list[dict]:
+    if not path.exists():
+        print(f"ERROR: {path} not found. Run 'scrape' first.")
+        sys.exit(1)
+
+    try:
+        data = json.loads(path.read_text(encoding="utf-8"))
+    except json.JSONDecodeError as e:
+        print(f"ERROR: invalid JSON in {path}: {e}")
+        sys.exit(1)
+
+    if not isinstance(data, list):
+        print(f"ERROR: expected JSON array in {path}")
+        sys.exit(1)
+
+    rows: list[dict] = []
+    for index, row in enumerate(data, 1):
+        if not isinstance(row, dict):
+            print(f"ERROR: {path} row #{index} is not an object")
+            sys.exit(1)
+        rows.append(row)
+    return rows
+
+
+def _is_trainer_page_url(url: str) -> bool:
+    parsed = urlparse(url)
+    return parsed.scheme in {"http", "https"} and parsed.netloc and "/trainer/" in parsed.path
+
+
+def _download_trainer_cover(
+    trainer: dict,
+    output_dir: Path,
+    force: bool,
+) -> dict[str, str]:
+    trainer_name = _clean_mapping_text(trainer.get("name")) or "(unnamed trainer)"
+    page_url = _clean_mapping_text(trainer.get("url"))
+
+    try:
+        page_resp = requests.get(page_url, headers=REQUEST_HEADERS, timeout=30)
+        page_resp.raise_for_status()
+
+        image_url = _extract_trainer_cover_url(page_resp.text, page_url)
+        if not image_url:
+            raise RuntimeError("cover image not found")
+
+        extension = _infer_image_extension(image_url, "")
+        output_path = output_dir / f"{_trainer_page_slug(page_url, trainer_name)}{extension}"
+        if output_path.exists() and not force:
+            return {
+                "status": "skipped_existing",
+                "name": trainer_name,
+                "file": str(output_path),
+                "error": "",
+            }
+
+        image_headers = {**REQUEST_HEADERS, "Referer": page_url}
+        image_resp = requests.get(image_url, headers=image_headers, timeout=60)
+        image_resp.raise_for_status()
+
+        content_type = image_resp.headers.get("Content-Type", "")
+        if not content_type.lower().split(";", 1)[0].startswith("image/"):
+            raise RuntimeError(f"unexpected content type: {content_type or '(empty)'}")
+
+        if extension == ".jpg":
+            inferred = _infer_image_extension(image_url, content_type)
+            if inferred != extension:
+                output_path = output_path.with_suffix(inferred)
+                if output_path.exists() and not force:
+                    return {
+                        "status": "skipped_existing",
+                        "name": trainer_name,
+                        "file": str(output_path),
+                        "error": "",
+                    }
+
+        temp_path = output_path.with_suffix(output_path.suffix + ".tmp")
+        temp_path.write_bytes(image_resp.content)
+        temp_path.replace(output_path)
+
+        return {
+            "status": "downloaded",
+            "name": trainer_name,
+            "file": str(output_path),
+            "error": "",
+        }
+    except Exception as e:
+        return {
+            "status": "failed",
+            "name": trainer_name,
+            "file": "",
+            "error": str(e),
+        }
+
+
+def _extract_trainer_cover_url(page_html: str, page_url: str) -> str:
+    soup = BeautifulSoup(page_html, "html.parser")
+    selectors = (
+        "article .entry img.aligncenter",
+        "article .entry img[src]",
+        ".entry img.aligncenter",
+        ".entry img[src]",
+    )
+
+    for selector in selectors:
+        image = soup.select_one(selector)
+        if image is None:
+            continue
+
+        srcset_url = _largest_srcset_url(image.get("srcset"), page_url)
+        if srcset_url:
+            return srcset_url
+
+        src = _clean_mapping_text(image.get("src"))
+        if src:
+            return urljoin(page_url, src)
+
+    return ""
+
+
+def _largest_srcset_url(srcset: object, page_url: str) -> str:
+    if not isinstance(srcset, str) or not srcset.strip():
+        return ""
+
+    candidates: list[tuple[int, str]] = []
+    for item in srcset.split(","):
+        parts = item.strip().split()
+        if not parts:
+            continue
+
+        url = parts[0]
+        width = 0
+        if len(parts) > 1 and parts[1].endswith("w"):
+            try:
+                width = int(parts[1][:-1])
+            except ValueError:
+                width = 0
+        candidates.append((width, urljoin(page_url, url)))
+
+    if not candidates:
+        return ""
+    return max(candidates, key=lambda item: item[0])[1]
+
+
+def _trainer_page_slug(page_url: str, trainer_name: str) -> str:
+    slug = Path(urlparse(page_url).path.rstrip("/")).name
+    if not slug:
+        slug = trainer_name
+    slug = re.sub(r"[^A-Za-z0-9._-]+", "-", slug).strip("-._")
+    return slug or "trainer-cover"
+
+
+def _infer_image_extension(image_url: str, content_type: str) -> str:
+    suffix = Path(urlparse(image_url).path).suffix.lower()
+    if suffix in {".jpg", ".jpeg", ".png", ".webp", ".gif"}:
+        return ".jpg" if suffix == ".jpeg" else suffix
+
+    content_type = content_type.lower().split(";", 1)[0].strip()
+    return {
+        "image/jpeg": ".jpg",
+        "image/jpg": ".jpg",
+        "image/png": ".png",
+        "image/webp": ".webp",
+        "image/gif": ".gif",
+    }.get(content_type, ".jpg")
 
 
 def cmd_export_missing(output_path: Path) -> Path:
@@ -946,6 +1187,33 @@ def cli(argv: list[str] | None = None) -> None:
         default=20,
         help="最多显示多少条 needs_review 记录，默认 20",
     )
+    download_covers_parser = sub.add_parser(
+        "download-covers",
+        help="下载现代修改器页面封面图",
+    )
+    download_covers_parser.add_argument(
+        "--workers",
+        type=int,
+        default=8,
+        help="并发 worker 数，默认 8",
+    )
+    download_covers_parser.add_argument(
+        "--limit",
+        type=int,
+        default=None,
+        help="只处理前 N 个 modern trainer 页面，默认全部",
+    )
+    download_covers_parser.add_argument(
+        "--output-dir",
+        type=Path,
+        default=TRAINER_COVERS_DIR,
+        help=f"图片输出目录，默认 {TRAINER_COVERS_DIR}",
+    )
+    download_covers_parser.add_argument(
+        "--force",
+        action="store_true",
+        help="覆盖已存在的封面图片",
+    )
     export_missing_parser = sub.add_parser(
         "export-missing",
         help="导出缺失翻译映射模板 JSON",
@@ -990,6 +1258,13 @@ def cli(argv: list[str] | None = None) -> None:
         cmd_build_sqlite(args.release_tag)
     elif args.command == "sqlite-status":
         cmd_sqlite_status(args.limit)
+    elif args.command == "download-covers":
+        cmd_download_covers(
+            workers=args.workers,
+            limit=args.limit,
+            output_dir=args.output_dir,
+            force=args.force,
+        )
     elif args.command == "export-missing":
         cmd_export_missing(args.output)
     elif args.command == "import-missing":
