@@ -8,5 +8,6 @@ __pycache__/
 
 # Output (runtime-generated)
 output/game_mappings_missing.json
+output/trainer_covers/
 __pycache__
 .vscode
