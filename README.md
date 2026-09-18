@@ -1,28 +1,13 @@
 # game-mappings-updater
 
-从 [flingtrainer.com](https://flingtrainer.com/) 爬取所有修改器（Trainer）名称，并通过 [IGDB API](https://api-docs.igdb.com/)、Steam 商店接口和 Wikidata API 获取官方中文/日文译名。
+从 [flingtrainer.com](https://flingtrainer.com/) 爬取所有修改器（Trainer）名称，维护游戏名映射表，并生成可供搜索系统使用的 SQLite 数据库。
+
+游戏名中文/日文翻译由外部流程（例如 AI）补齐后写入 `game_mappings_manual.json`，本工具负责抓取、导入缺失映射、构建与发布数据库。
 
 ## 环境要求
 
 - Python ≥ 3.12
 - [uv](https://docs.astral.sh/uv/) 包管理器
-
-## 配置
-
-复制 `.env.example` 为 `.env`，填入你的 Twitch/IGDB 凭据：
-
-```bash
-cp .env.example .env
-```
-
-```env
-IGDB_CLIENT_ID=your_client_id
-IGDB_CLIENT_SECRET=your_client_secret
-```
-
-> Steam 翻译功能不需要额外配置；只有 IGDB 翻译需要这些凭据。
->
-> 凭据在 [Twitch Developer Console](https://dev.twitch.tv/console) 注册应用获取。
 
 ## 使用方法
 
@@ -33,51 +18,33 @@ uv run game-mappings-updater scrape
 # 2. 一键刷新抓取结果、重建 SQLite，并导出缺失映射模板
 uv run game-mappings-updater update
 
-# 3. 通过 IGDB 翻译游戏名（需先运行 scrape）
-uv run game-mappings-updater translate
-
-# 4. 通过 Steam 商店接口翻译游戏名（需先运行 scrape）
-uv run game-mappings-updater translate-steam
-
-# 5. 通过 Wikidata API 翻译游戏名（需先运行 scrape）
-uv run game-mappings-updater translate-wikidata
-
-# 6. 并发执行三个翻译源
-uv run game-mappings-updater translate-all
-
-# 7. 指定并发 worker 数
-uv run game-mappings-updater translate-all --workers 3
-
-# 8. 将 manual 映射和 FLiNG 抓取结果汇总为 SQLite 数据库
+# 3. 将 manual 映射和 FLiNG 抓取结果汇总为 SQLite 数据库
 uv run game-mappings-updater build-sqlite
 
-# 9. 查看 SQLite 数据库状态
+# 4. 查看 SQLite 数据库状态
 uv run game-mappings-updater sqlite-status
 
-# 10. 限制显示的待处理记录条数
+# 5. 限制显示的待处理记录条数
 uv run game-mappings-updater sqlite-status --limit 50
 
-# 11. 下载现代修改器页面封面图（需先运行 scrape / update）
+# 6. 下载现代修改器页面封面图（需先运行 scrape / update）
 uv run game-mappings-updater download-covers
 
-# 12. 调试时只下载前 3 个，输出到临时目录
+# 7. 调试时只下载前 3 个，输出到临时目录
 uv run game-mappings-updater download-covers --limit 3 --output-dir /tmp/fling-covers-test
 
-# 13. 覆盖已存在封面
+# 8. 覆盖已存在封面
 uv run game-mappings-updater download-covers --force
 
-# 14. 单独导出缺失映射模板
+# 9. 单独导出缺失映射模板
 uv run game-mappings-updater export-missing
 
-# 15. 只校验补齐后的 JSON 格式和内容
+# 10. 只校验补齐后的 JSON 格式和内容
 uv run game-mappings-updater import-missing --check-only
 
-# 16. 导入补齐后的缺失映射，并自动重建 DB / 重新导出缺失模板
+# 11. 导入补齐后的缺失映射，并自动重建 DB / 重新导出缺失模板
 uv run game-mappings-updater import-missing
 ```
-
-`translate`、`translate-steam` 和 `translate-wikidata` 都支持增量运行：已翻译的游戏会自动跳过，中断后重新运行会继续。
-`translate-all` 会并发运行这三个翻译源，并把每个来源的输出分别写入对应的 JSON 文件。
 
 ## 输出文件
 
@@ -87,9 +54,6 @@ uv run game-mappings-updater import-missing
 |------|------|
 | `fling_all_trainers.json` | 完整修改器列表（名称、URL、来源） |
 | `fling_game_names.json` | 游戏名列表（去掉 "Trainer" 后缀） |
-| `fling_translations_igdb.json` | IGDB 翻译结果（英文名 + 中文简体/繁体 + 日文） |
-| `fling_translations_steam.json` | Steam 翻译结果（英文名 + 中文简体 + 日文 + Steam 调试字段） |
-| `fling_translations_wikidata.json` | Wikidata 翻译结果（英文名 + 中文简体 + 日文 + Wikidata 调试字段） |
 | `game_mappings_manual.json` | 手工维护的英文/简中/日文映射，作为 SQLite 导出的唯一翻译来源 |
 | `game_mappings_missing.json` | 当前缺失翻译映射的导出模板，补齐后可直接导入 |
 | `fling_translations.db` | 基于 manual 映射和 FLiNG 抓取结果生成的 SQLite 数据库，供搜索系统直接使用 |
@@ -116,7 +80,7 @@ uv run game-mappings-updater import-missing
 - `fling_game_names.json`
 - `fling_all_trainers.json`
 
-其中 `game_mappings_manual.json` 是唯一翻译真源；SQLite 不再依赖 `fling_translations_igdb.json`、`fling_translations_steam.json` 或 `fling_translations_wikidata.json`。
+其中 `game_mappings_manual.json` 是唯一翻译真源。
 
 数据库现在包含：
 

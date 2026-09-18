@@ -1,14 +1,10 @@
 """
 game-mappings-updater — 从 flingtrainer.com 爬取所有修改器名称，
-并通过 IGDB / Steam / Wikidata 获取官方中文/日文译名。
+并维护游戏名映射表与 SQLite 数据库。
 
 子命令:
   scrape           爬取 flingtrainer.com 所有修改器名称
   update           刷新 FLiNG 抓取结果、重建 SQLite，并导出缺失映射模板
-  translate        通过 IGDB API 翻译游戏名为中文/日文
-  translate-steam  通过 Steam 商店接口补充中文/日文标题
-  translate-wikidata  通过 Wikidata API 补充中文/日文标题
-  translate-all    并发执行 IGDB / Steam / Wikidata 翻译
   build-sqlite     将 manual 映射和 FLiNG 抓取结果汇总为 SQLite 数据库
   sqlite-status    查看 SQLite 数据库状态和待处理映射
   download-covers  下载现代修改器页面封面图
@@ -26,7 +22,6 @@ import re
 import sqlite3
 import sys
 from pathlib import Path
-from typing import Callable
 from urllib.parse import urljoin, urlparse
 
 import requests
@@ -212,250 +207,6 @@ def cmd_scrape() -> None:
         encoding="utf-8",
     )
     print(f"✔ Game names only → {names_path}")
-
-
-def cmd_translate() -> None:
-    """Translate game names to Chinese/Japanese using the IGDB API."""
-    from igdb import IGDBClient  # lazy import to avoid import errors when not using
-
-    names_path = OUTPUT_DIR / "fling_game_names.json"
-    translations_path = OUTPUT_DIR / "fling_translations_igdb.json"
-
-    # -- Load game names ---------------------------------------------------
-    if not names_path.exists():
-        print(f"ERROR: {names_path} not found. Run 'scrape' first.")
-        sys.exit(1)
-
-    game_names: list[str] = json.loads(names_path.read_text(encoding="utf-8"))
-    print(f"Loaded {len(game_names)} game names from {names_path.name}")
-
-    # -- Load existing cache (incremental) ---------------------------------
-    cache: dict[str, dict] = {}
-    if translations_path.exists():
-        existing = json.loads(translations_path.read_text(encoding="utf-8"))
-        for entry in existing:
-            cache[entry["english"]] = entry
-        print(f"Loaded {len(cache)} cached translations")
-
-    # -- Query IGDB --------------------------------------------------------
-    client = IGDBClient()
-    client.authenticate()
-    print("✔ IGDB authenticated\n")
-
-    total = len(game_names)
-    new_count = 0
-    skip_count = 0
-    fail_count = 0
-
-    for i, name in enumerate(game_names, 1):
-        # Skip if already cached
-        if name in cache:
-            skip_count += 1
-            continue
-
-        prefix = f"[{i}/{total}]"
-        try:
-            result = client.search_game_translations(name)
-            cache[name] = result.to_dict()
-            new_count += 1
-
-            if result.matched:
-                parts = []
-                if result.chinese_simplified:
-                    parts.append(f"zh={result.chinese_simplified}")
-                if result.japanese:
-                    parts.append(f"ja={result.japanese}")
-                info = ", ".join(parts) if parts else "(no translations)"
-                print(f"  {prefix} ✔ {name} → {info}")
-            else:
-                fail_count += 1
-                print(f"  {prefix} ✘ {name} (no match)")
-        except Exception as e:
-            cache[name] = {"english": name, "matched": False, "error": str(e)}
-            fail_count += 1
-            print(f"  {prefix} ✘ {name} (error: {e})")
-
-        # Save periodically (every 50 games)
-        if new_count % 50 == 0:
-            _save_translations(translations_path, cache, game_names)
-
-    # -- Final save --------------------------------------------------------
-    _save_translations(translations_path, cache, game_names)
-
-    matched = sum(1 for v in cache.values() if v.get("matched"))
-    has_zh = sum(1 for v in cache.values() if v.get("chinese_simplified"))
-    has_ja = sum(1 for v in cache.values() if v.get("japanese"))
-
-    print()
-    print(f"{'=' * 50}")
-    print(f"Total games      : {total}")
-    print(f"  Matched (IGDB) : {matched}")
-    print(f"  Has Chinese    : {has_zh}")
-    print(f"  Has Japanese   : {has_ja}")
-    print(f"  Skipped (cached): {skip_count}")
-    print(f"  New queries    : {new_count}")
-    print(f"{'=' * 50}")
-    print(f"\n✔ Translations → {translations_path}")
-
-
-def cmd_translate_steam() -> None:
-    """Translate game names to Chinese/Japanese using the Steam store."""
-    from steam import SteamClient  # lazy import to avoid import errors when not using
-
-    names_path = OUTPUT_DIR / "fling_game_names.json"
-    translations_path = OUTPUT_DIR / "fling_translations_steam.json"
-
-    if not names_path.exists():
-        print(f"ERROR: {names_path} not found. Run 'scrape' first.")
-        sys.exit(1)
-
-    game_names: list[str] = json.loads(names_path.read_text(encoding="utf-8"))
-    print(f"Loaded {len(game_names)} game names from {names_path.name}")
-
-    cache: dict[str, dict] = {}
-    if translations_path.exists():
-        existing = json.loads(translations_path.read_text(encoding="utf-8"))
-        for entry in existing:
-            if entry.get("matched"):
-                cache[entry["english"]] = entry
-        print(f"Loaded {len(cache)} cached matched Steam translations")
-
-    client = SteamClient()
-    print("✔ Steam client ready\n")
-
-    total = len(game_names)
-    new_count = 0
-    skip_count = 0
-    fail_count = 0
-
-    for i, name in enumerate(game_names, 1):
-        if name in cache:
-            skip_count += 1
-            continue
-
-        prefix = f"[{i}/{total}]"
-        try:
-            result = client.search_game_translations(name)
-            cache[name] = result.to_dict()
-            new_count += 1
-
-            if result.matched:
-                parts = [f"appid={result.steam_appid}"]
-                if result.chinese_simplified:
-                    parts.append(f"zh={result.chinese_simplified}")
-                if result.japanese:
-                    parts.append(f"ja={result.japanese}")
-                info = ", ".join(parts)
-                print(f"  {prefix} ✔ {name} → {info}")
-            else:
-                fail_count += 1
-                print(f"  {prefix} ✘ {name} (no match)")
-        except Exception as e:
-            cache[name] = {"english": name, "matched": False, "error": str(e)}
-            fail_count += 1
-            print(f"  {prefix} ✘ {name} (error: {e})")
-
-        if new_count % 50 == 0:
-            _save_translations(translations_path, cache, game_names)
-
-    _save_translations(translations_path, cache, game_names)
-
-    matched = sum(1 for v in cache.values() if v.get("matched"))
-    has_zh = sum(1 for v in cache.values() if v.get("chinese_simplified"))
-    has_ja = sum(1 for v in cache.values() if v.get("japanese"))
-
-    print()
-    print(f"{'=' * 50}")
-    print(f"Total games       : {total}")
-    print(f"  Matched (Steam) : {matched}")
-    print(f"  Has Chinese     : {has_zh}")
-    print(f"  Has Japanese    : {has_ja}")
-    print(f"  Skipped (cached): {skip_count}")
-    print(f"  New queries     : {new_count}")
-    print(f"  Failed          : {fail_count}")
-    print(f"{'=' * 50}")
-    print(f"\n✔ Translations → {translations_path}")
-
-
-def cmd_translate_wikidata() -> None:
-    """Translate game names to Chinese/Japanese using Wikidata."""
-    from wikidata import WikidataClient  # lazy import to avoid import errors when not using
-
-    names_path = OUTPUT_DIR / "fling_game_names.json"
-    translations_path = OUTPUT_DIR / "fling_translations_wikidata.json"
-
-    if not names_path.exists():
-        print(f"ERROR: {names_path} not found. Run 'scrape' first.")
-        sys.exit(1)
-
-    game_names: list[str] = json.loads(names_path.read_text(encoding="utf-8"))
-    print(f"Loaded {len(game_names)} game names from {names_path.name}")
-
-    cache: dict[str, dict] = {}
-    if translations_path.exists():
-        existing = json.loads(translations_path.read_text(encoding="utf-8"))
-        for entry in existing:
-            if entry.get("matched"):
-                cache[entry["english"]] = entry
-        print(f"Loaded {len(cache)} cached matched Wikidata translations")
-
-    client = WikidataClient()
-    print("✔ Wikidata client ready\n")
-
-    total = len(game_names)
-    new_count = 0
-    skip_count = 0
-    fail_count = 0
-
-    for i, name in enumerate(game_names, 1):
-        if name in cache:
-            skip_count += 1
-            continue
-
-        prefix = f"[{i}/{total}]"
-        try:
-            result = client.search_game_translations(name)
-            cache[name] = result.to_dict()
-            new_count += 1
-
-            if result.matched:
-                parts = [f"qid={result.wikidata_id}"]
-                if result.chinese_simplified:
-                    parts.append(f"zh={result.chinese_simplified}")
-                if result.japanese:
-                    parts.append(f"ja={result.japanese}")
-                info = ", ".join(parts)
-                print(f"  {prefix} ✔ {name} → {info}")
-            else:
-                fail_count += 1
-                print(f"  {prefix} ✘ {name} (no match)")
-        except Exception as e:
-            cache[name] = {"english": name, "matched": False, "error": str(e)}
-            fail_count += 1
-            print(f"  {prefix} ✘ {name} (error: {e})")
-
-        if new_count % 50 == 0:
-            _save_translations(translations_path, cache, game_names)
-
-    _save_translations(translations_path, cache, game_names)
-
-    matched = sum(1 for v in cache.values() if v.get("matched"))
-    has_zh = sum(1 for v in cache.values() if v.get("chinese_simplified"))
-    has_ja = sum(1 for v in cache.values() if v.get("japanese"))
-
-    print()
-    print(f"{'=' * 50}")
-    print(f"Total games          : {total}")
-    print(f"  Matched (Wikidata) : {matched}")
-    print(f"  Has Chinese        : {has_zh}")
-    print(f"  Has Japanese       : {has_ja}")
-    print(f"  Skipped (cached)   : {skip_count}")
-    print(f"  New queries        : {new_count}")
-    print(f"  Failed             : {fail_count}")
-    print(f"{'=' * 50}")
-    print(f"\n✔ Translations → {translations_path}")
-
-
 def cmd_build_sqlite(release_tag: str = "") -> None:
     """Build a SQLite database from manual mappings and FLiNG scrape outputs."""
     from sqlite_export import build_sqlite_database
@@ -1090,57 +841,6 @@ def cmd_sqlite_status(limit: int) -> None:
         if missing_japanese:
             flags.append("missing_japanese")
         print(f"  - {english} [{', '.join(flags)}]")
-
-
-def cmd_translate_all(workers: int) -> None:
-    """Run all translation sources concurrently."""
-    tasks: list[tuple[str, Callable[[], None]]] = [
-        ("IGDB", cmd_translate),
-        ("Steam", cmd_translate_steam),
-        ("Wikidata", cmd_translate_wikidata),
-    ]
-    max_workers = max(1, min(workers, len(tasks)))
-
-    print(f"Starting parallel translation jobs with {max_workers} worker(s) ...\n")
-    for label, _ in tasks:
-        print(f"[start] {label}")
-    print()
-
-    failures = 0
-    with ThreadPoolExecutor(max_workers=max_workers) as executor:
-        futures = {executor.submit(func): label for label, func in tasks}
-
-        for future in as_completed(futures):
-            label = futures[future]
-            try:
-                future.result()
-                print(f"✔ {label} completed")
-            except SystemExit as e:
-                code = e.code if isinstance(e.code, int) else 1
-                failures += 1
-                print(f"✘ {label} failed: exited with status {code}")
-            except Exception as e:
-                failures += 1
-                print(f"✘ {label} failed: {e}")
-
-    if failures:
-        print(f"ERROR: {failures} translation job(s) failed.")
-        sys.exit(1)
-
-    print("✔ All translation jobs completed")
-
-
-def _save_translations(
-    path: Path, cache: dict[str, dict], ordered_names: list[str]
-) -> None:
-    """Save translations in the same order as the game names list."""
-    ordered = [cache[n] for n in ordered_names if n in cache]
-    path.write_text(
-        json.dumps(ordered, indent=2, ensure_ascii=False),
-        encoding="utf-8",
-    )
-
-
 # ---------------------------------------------------------------------------
 # CLI
 # ---------------------------------------------------------------------------
@@ -1155,19 +855,6 @@ def cli(argv: list[str] | None = None) -> None:
 
     sub.add_parser("scrape", help="爬取所有修改器名称并保存到 output/")
     sub.add_parser("update", help="刷新 FLiNG 抓取结果、重建 SQLite，并导出缺失映射模板")
-    sub.add_parser("translate", help="通过 IGDB API 翻译游戏名为中文/日文")
-    sub.add_parser("translate-steam", help="通过 Steam 商店接口翻译游戏名为中文/日文")
-    sub.add_parser("translate-wikidata", help="通过 Wikidata API 翻译游戏名为中文/日文")
-    translate_all_parser = sub.add_parser(
-        "translate-all",
-        help="并发执行 IGDB / Steam / Wikidata 翻译",
-    )
-    translate_all_parser.add_argument(
-        "--workers",
-        type=int,
-        default=3,
-        help="并发 worker 数，默认 3",
-    )
     build_sqlite_parser = sub.add_parser(
         "build-sqlite",
         help="将 manual 映射和 FLiNG 抓取结果汇总为 SQLite 数据库",
@@ -1246,14 +933,6 @@ def cli(argv: list[str] | None = None) -> None:
         cmd_scrape()
     elif args.command == "update":
         cmd_update()
-    elif args.command == "translate":
-        cmd_translate()
-    elif args.command == "translate-steam":
-        cmd_translate_steam()
-    elif args.command == "translate-wikidata":
-        cmd_translate_wikidata()
-    elif args.command == "translate-all":
-        cmd_translate_all(args.workers)
     elif args.command == "build-sqlite":
         cmd_build_sqlite(args.release_tag)
     elif args.command == "sqlite-status":
