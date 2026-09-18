@@ -78,13 +78,24 @@ uv run game-mappings-updater scrape
 3. **不要把英文原样当作日文占位**（除非官方中日文本身保留英文副标题，例如 `鬼武者 Way of the Sword`）。
 4. **改名/替换要更新旧映射**：删除或改写旧 `en` 条目，避免 stale 重复（例如删掉 `Crimson Desert`，只保留 `Crimson Desert Enhanced`）。
 
-可选辅助命令：
+### 推荐做法
+
+**优先直接根据 scrape diff 编辑** `output/game_mappings_manual.json`（本阶段的主路径）。  
+`export-missing` / `import-missing` **不会读取刚 scrape 出的 JSON**，它们查询的是现有的 `output/fling_translations.db`。因此若 scrape 后立刻导出/导入，新游戏不会出现在模板里，`import-missing` 还可能把它们判成 unknown / non-missing。
+
+若要用这两条辅助命令，必须先用**本轮 JSON**临时重建一次 DB（可先不 bump 正式版本号）：
 
 ```bash
+# 用本轮 scrape 结果刷新 SQLite，再导出缺失模板
+uv run game-mappings-updater build-sqlite
 uv run game-mappings-updater export-missing
+
+# 编辑 output/game_mappings_missing.json 补齐 zh / ja 后：
 uv run game-mappings-updater import-missing --check-only
 uv run game-mappings-updater import-missing
 ```
+
+也可以一次跑 `uv run game-mappings-updater update`（内部顺序是 scrape → build-sqlite → export-missing），再编辑缺失模板并 `import-missing`。
 
 ### 本阶段核对
 
@@ -204,6 +215,7 @@ gh release edit vX.Y.Z --notes-file /path/to/notes.md
 | 日文仍是英文占位 | 按规则意译后重建 DB 再发版 |
 | 改名后旧 `en` 仍留在 manual | 删除或改写旧条目，避免双份 |
 | 本地 `--release-tag` 与最终 tag 不一致 | 合并前改对；CI 也会按 push 的 tag 再盖章一次 |
+| scrape 后立刻 `export-missing` / `import-missing` | 这两条读的是旧 DB。先 `build-sqlite`（或跑 `update`）再用，或直接改 `game_mappings_manual.json` |
 
 ## 6. 建议节奏与自动化
 
@@ -230,9 +242,10 @@ gh release edit vX.Y.Z --notes-file /path/to/notes.md
 
 ```bash
 uv run game-mappings-updater scrape
-uv run game-mappings-updater update          # 抓取 + 建库 + 导出缺失模板
+uv run game-mappings-updater update          # scrape → build-sqlite → export-missing（顺序正确）
 uv run game-mappings-updater build-sqlite --release-tag vX.Y.Z
 uv run game-mappings-updater sqlite-status
+# export/import-missing 依赖当前 fling_translations.db；scrape 后须先 build-sqlite
 uv run game-mappings-updater export-missing
 uv run game-mappings-updater import-missing
 ```
