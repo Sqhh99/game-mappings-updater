@@ -132,6 +132,12 @@ uv run game-mappings-updater import-missing
 
 导入时只会读取 `en / zh / ja`，其余字段只用于人工排查。`import-missing` 默认只补缺失，不覆盖 `game_mappings_manual.json` 里已有的非空值。
 
+## 定期更新 Loop
+
+从抓取、补齐中日文映射、重建 SQLite 到打 tag 发版的完整可重复流程，见 [loop.md](./loop.md)。
+
+发版时 Release 简介需列出新增/移除的修改器，以及新增条目的 English / 简体中文 / 日本語 对照表。
+
 ## Release 发布
 
 仓库内置了一个 GitHub Actions workflow：`make-release`。
