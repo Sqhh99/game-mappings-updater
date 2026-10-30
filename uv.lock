@@ -83,7 +83,7 @@ wheels = [
 
 [[package]]
 name = "game-mappings-updater"
-version = "0.0.12"
+version = "0.0.13"
 source = { editable = "." }
 dependencies = [
     { name = "beautifulsoup4" },
